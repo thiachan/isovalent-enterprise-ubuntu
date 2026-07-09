@@ -1,0 +1,21 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: frontend-l7-http
+  namespace: online-boutique
+spec:
+  description: "L7 visibility on frontend:8080 - allow GET and POST (DELETE/PUT denied when authoritative)"
+  endpointSelector:
+    matchLabels:
+      app: frontend
+  ingress:
+    - fromEntities:
+        - all
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+          rules:
+            http:
+              - method: "GET"
+              - method: "POST"

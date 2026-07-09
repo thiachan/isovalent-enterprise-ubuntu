@@ -1,0 +1,4 @@
+# local backups / scratch
+*.backup.*.yaml
+*.tmp
+.DS_Store

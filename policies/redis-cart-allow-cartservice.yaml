@@ -1,0 +1,18 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: redis-cart-allow-cartservice
+  namespace: online-boutique
+spec:
+  description: "Allow redis-cart:6379 only from cartservice (east-west zero-trust)"
+  endpointSelector:
+    matchLabels:
+      app: redis-cart
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: cartservice
+      toPorts:
+        - ports:
+            - port: "6379"
+              protocol: TCP
