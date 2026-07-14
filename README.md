@@ -182,12 +182,23 @@ by the analyzer on `schedule-interval: 24h`.
 │   ├── redis-cart-allow-cartservice.yaml    # L4 east-west zero-trust (CNP)
 │   ├── frontend-l7-http.yaml                # L7 HTTP allow GET/POST (CNP)
 │   └── frontend-l4-allow-8080.yaml          # basic L3/4 allow (reference; unions/overrides L7)
-└── scripts/
-    ├── 01-enable-timescape-flow-ingestion.sh
-    ├── 02-enable-timescape-beta-features.sh
-    ├── 03-test-policies.sh
-    └── 04-verify-timescape.sh
+├── scripts/
+│   ├── 01-enable-timescape-flow-ingestion.sh
+│   ├── 02-enable-timescape-beta-features.sh
+│   ├── 03-test-policies.sh
+│   └── 04-verify-timescape.sh
+└── tetragon/                                # runtime security (detection + enforcement)
+    ├── README.md
+    ├── block-shell-exec.yaml                # TracingPolicy: Sigkill shells in online-boutique
+    ├── tetragon-servicemonitor.yaml         # scrape Tetragon metrics into Prometheus
+    ├── grafana/tetragon-dashboard.json      # Grafana dashboard
+    └── scripts/
+        ├── 01-install-grafana-tetragon.sh   # Prometheus + Grafana + dashboard
+        └── 02-demo-sigkill.sh               # enforcement demo
 ```
+
+See [tetragon/README.md](tetragon/README.md) for the runtime‑security (Tetragon) detection,
+Sigkill enforcement, and Grafana dashboard steps.
 
 ---
 

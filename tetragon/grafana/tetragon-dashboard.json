@@ -1,0 +1,26 @@
+{
+  "title": "Tetragon Runtime Security",
+  "uid": "tetragon-runtime",
+  "schemaVersion": 39,
+  "editable": true,
+  "time": {"from": "now-1h", "to": "now"},
+  "refresh": "30s",
+  "templating": {"list": [{"name": "DS_PROM", "type": "datasource", "query": "prometheus", "hide": 0, "current": {}}]},
+  "panels": [
+    {"id":1,"type":"stat","title":"Process Exec Events (total)","gridPos":{"h":6,"w":6,"x":0,"y":0},
+     "datasource":{"type":"prometheus","uid":"${DS_PROM}"},
+     "targets":[{"expr":"sum(tetragon_events_total{type=\"PROCESS_EXEC\"})","refId":"A"}]},
+    {"id":2,"type":"stat","title":"Namespaces observed","gridPos":{"h":6,"w":6,"x":0,"y":6},
+     "datasource":{"type":"prometheus","uid":"${DS_PROM}"},
+     "targets":[{"expr":"count(count by (namespace)(tetragon_events_total{namespace!=\"\"}))","refId":"A"}]},
+    {"id":3,"type":"timeseries","title":"Exec rate by namespace","gridPos":{"h":12,"w":18,"x":6,"y":0},
+     "datasource":{"type":"prometheus","uid":"${DS_PROM}"},
+     "targets":[{"expr":"sum by (namespace) (rate(tetragon_events_total{type=\"PROCESS_EXEC\"}[5m]))","legendFormat":"{{namespace}}","refId":"A"}]},
+    {"id":4,"type":"table","title":"Top executed binaries","gridPos":{"h":11,"w":12,"x":0,"y":12},
+     "datasource":{"type":"prometheus","uid":"${DS_PROM}"},
+     "targets":[{"expr":"topk(15, sum by (binary,namespace,workload) (tetragon_events_total{type=\"PROCESS_EXEC\"}))","format":"table","instant":true,"refId":"A"}]},
+    {"id":5,"type":"timeseries","title":"Events by type (rate)","gridPos":{"h":11,"w":12,"x":12,"y":12},
+     "datasource":{"type":"prometheus","uid":"${DS_PROM}"},
+     "targets":[{"expr":"sum by (type) (rate(tetragon_events_total[5m]))","legendFormat":"{{type}}","refId":"A"}]}
+  ]
+}

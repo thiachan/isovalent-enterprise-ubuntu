@@ -1,0 +1,27 @@
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicyNamespaced
+metadata:
+  name: block-shell-exec
+  namespace: online-boutique
+spec:
+  kprobes:
+    - call: "security_bprm_creds_from_file"
+      syscall: false
+      args:
+        # NOTE: on kernel 6.8 the signature is
+        # security_bprm_creds_from_file(struct linux_binprm *bprm, struct file *file)
+        # so the file to match is argument index 1 (NOT 0).
+        - index: 1
+          type: "file"
+      selectors:
+        - matchArgs:
+            - index: 1
+              operator: "Postfix"
+              values:
+                - "/bin/sh"
+                - "/bin/bash"
+                - "/usr/bin/sh"
+                - "/usr/bin/bash"
+                - "/bin/dash"
+          matchActions:
+            - action: Sigkill
