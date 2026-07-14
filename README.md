@@ -11,6 +11,9 @@ This repo captures a real troubleshooting + demo session:
 3. Generating and verifying allowed/blocked traffic in Timescape.
 4. Enabling the Timescape **Assessment** and **Enforcement Points** (Beta) UI features.
 
+> For a stage‑ready, end‑to‑end walkthrough of **all** the features (with architecture and
+> sequence diagrams), see **[DEMO.md](DEMO.md)**.
+
 > Terminology: **SCC** = Cisco Security Cloud Control, **cdFMC** = cloud‑delivered FMC.
 
 ---
