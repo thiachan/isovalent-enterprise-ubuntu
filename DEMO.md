@@ -584,14 +584,156 @@ changes.
 ## 11. Reset between runs
 
 ```bash
-# network policies
-kubectl -n online-boutique delete cnp frontend-l7-http redis-cart-allow-cartservice --ignore-not-found
-# runtime policy
-kubectl -n online-boutique delete tracingpolicynamespaced block-shell-exec --ignore-not-found
+# network policies (Cilium)
+kubectl -n online-boutique delete cnp frontend-l7-http redis-cart-allow-cartservice \
+  frontend-l4-allow-8080 recommendation-fqdn-egress --ignore-not-found
+kubectl delete ccnp block-cloud-metadata --ignore-not-found
+# runtime policies (Tetragon)
+kubectl -n online-boutique delete tracingpolicynamespaced \
+  block-shell-exec detect-privilege-escalation detect-sensitive-file-access monitor-network-egress --ignore-not-found
 ```
 
-Re‑apply from `policies/` and `tetragon/` to restore the demo.
+Re‑apply from `policies/` and `tetragon/` to restore the demo (e.g. `kubectl apply -f policies/`,
+`kubectl apply -f tetragon/`).
 
 > Screenshots: capture the Timescape Flows/Network‑Security pages and the Grafana dashboard live
 > from your environment and drop them into a `docs/img/` folder — real UI captures land better with
 > an audience than static images, and this environment's data is already populated.
+
+---
+
+## 12. Additions & fixes — 2026‑07‑15 session
+
+Everything built/verified in the latest working session. All commands are confirmed against
+`ubuntu-amber-yak-88`.
+
+> Cluster facts learned this session:
+> - App namespace is **`online-boutique`** (not `boutique`).
+> - **Tetragon** runs in namespace **`tetragon`** (DaemonSet `tetragon`, container `tetragon`) — *not* kube-system.
+> - **Grafana** is kube‑prometheus‑stack in ns `monitoring`; dashboards auto‑load from ConfigMaps labelled `grafana_dashboard=1` (sidecar).
+> - Pods with a shell **and** python3 for triggers: `loadgenerator`, `recommendationservice`. `frontend` etc. are distroless (no shell).
+> - `tpn` is **not** a valid short name here — use full `tracingpolicynamespaced`.
+
+### 12.1 Timescape retention (Lite)
+
+- Symptom: **Dropped** verdict (and any older data) missing. Root cause: Timescape **Lite** default
+  retention **`flows-ttl: 1h`** — the store only ever holds the last hour, for *all* verdicts. Always
+  search a **recent** window (Last 15 min / 1 hour), never "a week/month ago".
+- Retention lives in ConfigMap **`hubble-timescape-lite-config`** (ns `hubble-timescape`), key
+  `config.yaml`, field `flows-ttl`. Change it and restart the pod:
+  ```bash
+  # bump retention (current demo value: 1 week)
+  kubectl -n hubble-timescape get cm hubble-timescape-lite-config -o json \
+    | python3 -c 'import sys,json;d=json.load(sys.stdin);c=d["data"]["config.yaml"];d["data"]["config.yaml"]=c.replace("flows-ttl: 24h0m0s","flows-ttl: 168h0m0s");print(json.dumps({"data":d["data"]}))' \
+    | kubectl -n hubble-timescape patch cm hubble-timescape-lite-config --type merge -p "$(cat)"
+  kubectl -n hubble-timescape delete pod hubble-timescape-lite-0   # restart to apply
+  ```
+- ⚠️ **Ephemeral store**: ClickHouse data is an **`emptyDir`** (no PVC). **Any pod restart wipes all
+  flows** (flows reset to 0). On a 16 GB / 4‑CPU node, avoid very long retention. Final demo value =
+  **`168h` (1 week)**; regenerate drops after any restart.
+- ClickHouse quick check:
+  ```bash
+  kubectl -n hubble-timescape exec hubble-timescape-lite-0 -c clickhouse -- \
+    clickhouse-client -u timescape_lite -d hubble -q \
+    "SELECT \`flow/verdict\` v, count() c FROM flows GROUP BY v"   # 1=FWD 2=DROP 5=REDIR 6=TRACE 7=XLATE
+  ```
+
+### 12.2 New Cilium network policies
+
+Files in `policies/`. Applied + verified.
+
+| Policy | Kind | Purpose | Trigger (drop) |
+|---|---|---|---|
+| `redis-cart-allow-cartservice` | CNP | L4 east‑west: only `cartservice → redis-cart:6379` | non‑cartservice → `redis-cart:6379` |
+| `frontend-l7-http` | CNP | L7: allow only GET/POST on `frontend:8080` | `DELETE`/`PUT` → 403 |
+| **`recommendation-fqdn-egress`** | CNP | **DNS/FQDN allow‑list**: `recommendationservice` may reach only `*.cisco.com` (+DNS +productcatalog) | any non‑cisco domain → dropped (shows DNS name in Timescape) |
+| **`block-cloud-metadata`** | **CCNP** | Cluster‑wide guardrail: deny egress to `169.254.169.254` (SSRF/cloud‑cred theft, T1552.005) | any pod → `169.254.169.254` |
+
+**Triggers** (namespace `online-boutique`):
+```bash
+# L4 east-west
+kubectl exec deploy/recommendationservice -c server -n online-boutique -- python3 -c "import socket;s=socket.socket();s.settimeout(2);s.connect(('redis-cart',6379))"
+# L7 method
+kubectl -n online-boutique exec deploy/recommendationservice -- python3 -c "import urllib.request,urllib.error;req=urllib.request.Request('http://frontend:80/',method='DELETE');\nimport sys\ntry: urllib.request.urlopen(req,timeout=3)\nexcept urllib.error.HTTPError as e: print('DENIED',e.code)"
+# FQDN egress (cisco allowed / others blocked)
+kubectl -n online-boutique exec deploy/recommendationservice -- python3 -c "import socket\nfor h in ['www.cisco.com','www.google.com']:\n  s=socket.socket();s.settimeout(2)\n  try: s.connect((socket.gethostbyname(h),443));print(h,'ALLOWED');s.close()\n  except: print(h,'BLOCKED')"
+# metadata guardrail
+kubectl -n online-boutique exec deploy/recommendationservice -- python3 -c "import socket;s=socket.socket();s.settimeout(2)\ntry: s.connect(('169.254.169.254',80));print('ALLOWED')\nexcept: print('BLOCKED')"
+```
+
+> **CRITICAL gotcha — deny policies break DNS unless `enableDefaultDeny` is set.**
+> On this Cilium build, a CNP/CCNP with `egressDeny` **alone** flips the selected pods into
+> **default‑deny egress**, which drops their DNS to kube‑dns (`10.96.0.10`) →
+> `Temporary failure in name resolution` and app gRPC timeouts (e.g. `lookup productcatalogservice:
+> i/o timeout`). **Fix:** add to the policy spec so it's a *pure additive deny*:
+> ```yaml
+> spec:
+>   enableDefaultDeny:
+>     egress: false
+>     ingress: false
+> ```
+> `block-cloud-metadata.yaml` already includes this.
+
+> **CCNP visibility in Timescape:** a `CiliumClusterwideNetworkPolicy` has **no namespace**, so it's
+> **hidden** when the Policies view is filtered to a namespace. Set **Namespace = All namespaces** to
+> see `block-cloud-metadata`.
+
+> **FQDN is allow‑list only:** Cilium `toFQDNs` is **not** supported in `egressDeny` (CRD rejects it).
+> You cannot express "block `*.bing.com`, allow the rest". Use the allow‑list model (allow the good;
+> everything else, including bad domains, is denied automatically).
+
+### 12.3 New Tetragon runtime policies
+
+Files in `tetragon/`. All four applied + verified. Icons in `tetra getevents -o compact`:
+🚀 `process` · 💥 `exit` · 🔑 `setuid` · 📚 `read` · 🔌 `connect`.
+
+| Policy | Hook | Mode | Trigger | MITRE |
+|---|---|---|---|---|
+| `block-shell-exec` | `security_bprm_creds_from_file` | **Sigkill** | `sh -c '…'` → exit 137 | T1059 |
+| `detect-privilege-escalation` | `__x64_sys_setuid` | Post | `python3 -c "import ctypes;ctypes.CDLL(None).syscall(105,0)"` | T1548 |
+| `detect-sensitive-file-access` | `security_file_permission` | Post | `python3 -c "open('/etc/passwd').read()"` | T1552 |
+| `monitor-network-egress` | `tcp_connect` | Post | `python3 -c "import socket;s=socket.socket();s.settimeout(2);s.connect(('1.1.1.1',443))"` | TA0011 |
+
+> Use **`python3 -c`** (not `sh`) for the privesc/file/egress triggers — otherwise `block-shell-exec`
+> kills the shell before the payload runs. Flip a policy to enforce by changing `matchActions` to
+> `- action: Sigkill` and `kubectl apply` (no delete needed).
+
+**Monitor (SOC pane):**
+```bash
+kubectl -n tetragon exec ds/tetragon -c tetragon -- tetra getevents -o compact | grep --line-buffered loadgenerator
+```
+
+**Two‑pane live shell‑block demo (the strongest moment):**
+```bash
+# Pane 2 (monitor, leave running)
+kubectl -n tetragon exec ds/tetragon -c tetragon -- tetra getevents -o compact | grep --line-buffered -iE "loadgenerator|SIGKILL"
+# Pane 1 (attacker)
+LG=$(kubectl -n online-boutique get pod -l app=loadgenerator -o jsonpath='{.items[0].metadata.name}')
+kubectl -n online-boutique exec $LG -c main -- sh -c 'cat /etc/passwd'   # → exit 137 (SIGKILL); pod stays 1/1 Running 0 restarts
+```
+
+### 12.4 Grafana — detail dashboard + "make everything move"
+
+- New dashboard **"Tetragon Runtime Security — Detail"** (uid `tetragon-runtime-detail`): posture &
+  telemetry health, per‑policy / per‑hook detection rates, **MITRE ATT&CK mapping**, and
+  observe‑vs‑enforce stats. File: `tetragon/grafana/tetragon-runtime-detail.json`; provisioned as
+  ConfigMap `tetragon-runtime-detail-dashboard` (ns `monitoring`, label `grafana_dashboard=1`) so the
+  sidecar auto‑loads it (no manual import).
+- Key metric = **`tetragon_policy_events_total{policy,hook,binary,namespace,workload}`** (per‑policy
+  detections). Drops/health = `tetragon_bpf_missed_events_total` etc. Loaded policies =
+  `tetragon_tracingpolicy_loaded{state}`.
+- ⚠️ There is **no** native metric for action mode (Post vs Sigkill) or MITRE — both are mapped
+  manually from the policy name. The stock dashboard's "SIGKILL total" = `sum(tetragon_policy_events_total)`
+  which **mixes** enforce + observe; filter to `{policy="block-shell-exec"}` for a true SIGKILL count.
+
+**Make ALL four counters move (drop‑in replacement for the old single‑scenario loop):**
+```bash
+LG=$(kubectl -n online-boutique get pod -l app=loadgenerator -o jsonpath='{.items[0].metadata.name}')
+for i in $(seq 1 20); do
+  kubectl -n online-boutique exec $LG -c main -- sh -c 'echo hi' 2>/dev/null                                              # block-shell-exec (SIGKILL)
+  kubectl -n online-boutique exec $LG -c main -- python3 -c "import ctypes;ctypes.CDLL(None).syscall(105,0)" 2>/dev/null   # privilege escalation
+  kubectl -n online-boutique exec $LG -c main -- python3 -c "open('/etc/passwd').read()" 2>/dev/null                      # sensitive file
+  kubectl -n online-boutique exec $LG -c main -- python3 -c "import socket;s=socket.socket();s.settimeout(2);s.connect(('1.1.1.1',443));s.close()" 2>/dev/null  # egress
+  sleep 2
+done
+```

@@ -1,0 +1,40 @@
+# FQDN / DNS-aware egress (allow-list) on recommendationservice.
+# Allows: DNS to CoreDNS, its app dependency (productcatalogservice), and
+#         only *.cisco.com externally. Everything else egress is dropped.
+# Test: from recommendationservice, TCP 443 to www.cisco.com = ALLOWED,
+#       any other domain (google/github/etc) = BLOCKED (shows DNS name in Timescape).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: recommendation-fqdn-egress
+  namespace: online-boutique
+spec:
+  endpointSelector:
+    matchLabels:
+      app: recommendationservice
+  egress:
+    # DNS visibility - REQUIRED so Cilium can map FQDN -> IPs
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    # App dependency: recommendationservice -> productcatalogservice (gRPC)
+    - toEndpoints:
+        - matchLabels:
+            app: productcatalogservice
+    # Only *.cisco.com allowed externally (add matchName: "cisco.com" for the apex)
+    - toFQDNs:
+        - matchPattern: "*.cisco.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

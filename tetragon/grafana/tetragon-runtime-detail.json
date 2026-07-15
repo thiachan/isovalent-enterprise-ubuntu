@@ -1,0 +1,291 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROM",
+      "label": "Prometheus",
+      "description": "Prometheus datasource scraping Tetragon (port 2112)",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" },
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" }
+  ],
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "time": { "from": "now-3h", "to": "now" },
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["tetragon", "runtime-security", "detail"],
+  "title": "Tetragon Runtime Security — Detail",
+  "uid": "tetragon-runtime-detail",
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROM",
+        "type": "datasource",
+        "query": "prometheus",
+        "label": "Prometheus",
+        "hide": 0,
+        "current": {},
+        "options": [],
+        "refresh": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Posture & Telemetry Health",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Policies loaded (enabled)",
+      "id": 2,
+      "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [ { "color": "green", "value": null } ] },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+          "expr": "sum(tetragon_tracingpolicy_loaded{state=\"enabled\"})",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Dropped / missed events (telemetry health)",
+      "description": "BPF missed + ringbuffer lost + notify overflow + export ratelimit drops. Low/flat = healthy, no lost telemetry under load.",
+      "id": 3,
+      "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 100 } ] },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+          "expr": "sum(tetragon_bpf_missed_events_total) + sum(tetragon_observer_ringbuf_events_lost_total) + sum(tetragon_notify_overflowed_events_total) + sum(tetragon_export_ratelimit_events_dropped_total)",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Enforcing — matches (Sigkill policies)",
+      "description": "Policy matches from ENFORCING policies (mapped manually: block-shell-exec). Tetragon metrics do not carry the action mode, so enforcing policies are listed explicitly.",
+      "id": 4,
+      "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "red" },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+          "expr": "sum(tetragon_policy_events_total{policy=~\"block-shell-exec\"})",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Observing — matches (Post policies)",
+      "description": "Policy matches from OBSERVE-ONLY policies (mapped manually: detect-privilege-escalation, detect-sensitive-file-access, monitor-network-egress).",
+      "id": 5,
+      "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "yellow" },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+          "expr": "sum(tetragon_policy_events_total{policy=~\"detect-privilege-escalation|detect-sensitive-file-access|monitor-network-egress\"})",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Detections over time",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "id": 6,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Policy match rate by policy",
+      "id": 7,
+      "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "lineWidth": 2, "showPoints": "never" },
+          "unit": "cps"
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+          "expr": "sum by (policy) (rate(tetragon_policy_events_total[5m]))",
+          "legendFormat": "{{policy}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Policy match rate by hook (attack type)",
+      "id": 8,
+      "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "lineWidth": 2, "showPoints": "never" },
+          "unit": "cps"
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+          "expr": "sum by (hook) (rate(tetragon_policy_events_total[5m]))",
+          "legendFormat": "{{hook}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "MITRE ATT&CK & detail",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
+      "id": 9,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "table",
+      "title": "MITRE ATT&CK mapping (by policy)",
+      "description": "Tetragon metrics carry no MITRE labels; technique is mapped from the policy name via value mappings.",
+      "id": 10,
+      "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
+      "options": { "showHeader": true },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+          "expr": "sum by (policy, hook) (tetragon_policy_events_total)",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "Time": true }, "renameByName": { "policy": "Policy", "hook": "Hook", "Value": "Matches" } } }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Policy" },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  { "type": "value", "options": {
+                    "block-shell-exec": { "text": "block-shell-exec · T1059 Command & Scripting", "index": 0 },
+                    "detect-privilege-escalation": { "text": "detect-privilege-escalation · T1548 Priv Esc", "index": 1 },
+                    "detect-sensitive-file-access": { "text": "detect-sensitive-file-access · T1552 Credentials", "index": 2 },
+                    "monitor-network-egress": { "text": "monitor-network-egress · TA0011 C2/Exfil", "index": 3 }
+                  } }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "table",
+      "title": "Blocked / matched — policy · hook · binary · namespace · workload",
+      "id": 11,
+      "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 15 },
+      "options": { "showHeader": true },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+          "expr": "sum by (policy, hook, binary, namespace, workload) (tetragon_policy_events_total)",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "Time": true }, "renameByName": { "policy": "Policy", "hook": "Hook", "binary": "Binary", "namespace": "Namespace", "workload": "Workload", "Value": "Matches" } } },
+        { "id": "sortBy", "options": { "fields": "", "sort": [ { "field": "Matches", "desc": true } ] } }
+      ]
+    }
+  ]
+}

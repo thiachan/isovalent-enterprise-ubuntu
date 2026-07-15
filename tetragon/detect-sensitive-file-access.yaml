@@ -1,0 +1,32 @@
+# Detect (observe) access to sensitive credential files.
+# Fires a Tetragon event when any process in online-boutique reads/opens
+# /etc/shadow or /etc/passwd. Observe-only (action: Post).
+# To ENFORCE (kill the process), change matchActions action to "Sigkill".
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicyNamespaced
+metadata:
+  name: detect-sensitive-file-access
+  namespace: online-boutique
+spec:
+  kprobes:
+    - call: "security_file_permission"
+      syscall: false
+      return: true
+      args:
+        - index: 0
+          type: "file"
+        - index: 1
+          type: "int"
+      returnArg:
+        index: 0
+        type: "int"
+      returnArgAction: "Post"
+      selectors:
+        - matchArgs:
+            - index: 0
+              operator: "Equal"
+              values:
+                - "/etc/shadow"
+                - "/etc/passwd"
+          matchActions:
+            - action: Post

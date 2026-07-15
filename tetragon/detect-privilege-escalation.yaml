@@ -1,0 +1,23 @@
+# Detect privilege escalation via setuid(0) (a process trying to become root).
+# x86_64 syscall symbol is __x64_sys_setuid (matches this cluster's kernel 6.8 / amd64).
+# Observe-only; add matchActions action: Sigkill to block the escalation.
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicyNamespaced
+metadata:
+  name: detect-privilege-escalation
+  namespace: online-boutique
+spec:
+  kprobes:
+    - call: "__x64_sys_setuid"
+      syscall: true
+      args:
+        - index: 0
+          type: "int"
+      selectors:
+        - matchArgs:
+            - index: 0
+              operator: "Equal"
+              values:
+                - "0"        # setuid(0) => attempt to become root
+          matchActions:
+            - action: Post

@@ -1,0 +1,28 @@
+# Network egress visibility: emit a Tetragon event for outbound TCP connections
+# from online-boutique pods to destinations OUTSIDE the pod/cluster CIDR.
+# Useful to spot C2 callbacks / data exfiltration attempts at the process level
+# (complements Cilium's FQDN egress policy which enforces at the network level).
+#
+# Adjust the NotDAddr CIDRs to match this cluster's pod/service ranges
+# (pods observed at 10.0.0.0/24, services at 10.96.0.0/12).
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicyNamespaced
+metadata:
+  name: monitor-network-egress
+  namespace: online-boutique
+spec:
+  kprobes:
+    - call: "tcp_connect"
+      syscall: false
+      args:
+        - index: 0
+          type: "sock"
+      selectors:
+        - matchArgs:
+            - index: 0
+              operator: "NotDAddr"
+              values:
+                - "10.0.0.0/8"
+                - "127.0.0.1"
+          matchActions:
+            - action: Post
