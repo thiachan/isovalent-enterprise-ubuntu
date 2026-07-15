@@ -25,9 +25,32 @@ This repo captures a real troubleshooting + demo session:
 | OS | Ubuntu 24.04 LTS |
 | Kubernetes | single node (`ubuntu-amber-yak-88`) |
 | CNI | Isovalent Enterprise for Cilium (v1.18.7), Hubble enabled, `cluster-name: default` |
+| Live network map | Hubble Relay + **Hubble UI** (`kube-system`) |
 | Observability | Hubble Timescape **Lite** (`hubble-timescape` namespace) |
 | Runtime | Tetragon |
 | Demo app | Online Boutique (`online-boutique` namespace) |
+
+### Demo UIs / NodePorts (host 192.168.7.10)
+
+| UI | NodePort | Login | Purpose |
+|----|----------|-------|---------|
+| Online Boutique | **30080** | — | the live app |
+| Hubble UI | **30012** | — | live service map + real‑time flows |
+| Timescape | **30900** | — | historical flows + Network Security posture |
+| Grafana | **30300** | admin / see secret† | Tetragon metrics + enforcement dashboard |
+
+> † **Grafana admin password** is not stored in this repo. Fetch it from the cluster:
+> ```bash
+> kubectl -n monitoring get secret kps-grafana -o jsonpath='{.data.admin-password}' | base64 -d; echo
+> ```
+
+SSH tunnel for all four:
+
+```bash
+ssh -J administrator@198.18.133.11 ubuntu@192.168.7.10 -p 32095 -N \
+  -L 30080:localhost:30080 -L 30012:localhost:30012 \
+  -L 30300:localhost:30300 -L 30900:localhost:30900
+```
 
 Timescape Lite components:
 

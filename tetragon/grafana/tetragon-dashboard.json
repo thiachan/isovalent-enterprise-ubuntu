@@ -21,6 +21,20 @@
      "targets":[{"expr":"topk(15, sum by (binary,namespace,workload) (tetragon_events_total{type=\"PROCESS_EXEC\"}))","format":"table","instant":true,"refId":"A"}]},
     {"id":5,"type":"timeseries","title":"Events by type (rate)","gridPos":{"h":11,"w":12,"x":12,"y":12},
      "datasource":{"type":"prometheus","uid":"${DS_PROM}"},
-     "targets":[{"expr":"sum by (type) (rate(tetragon_events_total[5m]))","legendFormat":"{{type}}","refId":"A"}]}
+     "targets":[{"expr":"sum by (type) (rate(tetragon_events_total[5m]))","legendFormat":"{{type}}","refId":"A"}]},
+    {"id":6,"type":"row","title":"Runtime Enforcement (TracingPolicy actions)","gridPos":{"h":1,"w":24,"x":0,"y":23}},
+    {"id":7,"type":"stat","title":"Enforcement actions — total (SIGKILL)","gridPos":{"h":6,"w":6,"x":0,"y":24},
+     "fieldConfig":{"defaults":{"color":{"mode":"thresholds"},"thresholds":{"steps":[{"color":"green","value":null},{"color":"red","value":1}]}}},
+     "datasource":{"type":"prometheus","uid":"${DS_PROM}"},
+     "targets":[{"expr":"sum(tetragon_policy_events_total)","refId":"A"}]},
+    {"id":8,"type":"stat","title":"Policies enforcing","gridPos":{"h":6,"w":6,"x":0,"y":30},
+     "datasource":{"type":"prometheus","uid":"${DS_PROM}"},
+     "targets":[{"expr":"count(count by (policy)(tetragon_policy_events_total))","refId":"A"}]},
+    {"id":9,"type":"timeseries","title":"Enforcement rate by policy (blocked execs/s)","gridPos":{"h":12,"w":18,"x":6,"y":24},
+     "datasource":{"type":"prometheus","uid":"${DS_PROM}"},
+     "targets":[{"expr":"sum by (policy) (rate(tetragon_policy_events_total[5m]))","legendFormat":"{{policy}}","refId":"A"}]},
+    {"id":10,"type":"table","title":"Blocked by policy / binary / namespace","gridPos":{"h":10,"w":24,"x":0,"y":36},
+     "datasource":{"type":"prometheus","uid":"${DS_PROM}"},
+     "targets":[{"expr":"topk(20, sum by (policy,binary,namespace,workload,hook) (tetragon_policy_events_total))","format":"table","instant":true,"refId":"A"}]}
   ]
 }

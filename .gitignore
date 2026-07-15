@@ -2,3 +2,6 @@
 *.backup.*.yaml
 *.tmp
 .DS_Store
+
+# local secrets (dev demo creds)
+.env

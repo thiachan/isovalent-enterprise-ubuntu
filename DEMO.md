@@ -16,14 +16,83 @@ Sigkill enforcement) surfaced both on the CLI and in a **Grafana** dashboard.
 |-----------|-------|--------|
 | Kubernetes (single node) | `ubuntu-amber-yak-88` (192.168.7.10) | `ssh -J administrator@198.18.133.11 ubuntu@192.168.7.10 -p 32095` |
 | CNI / observability | Isovalent Enterprise Cilium 1.18 + Hubble | — |
+| Live network map | Hubble **Relay + UI** | **Hubble UI** — NodePort **30012** |
 | Historical analytics | Hubble **Timescape Lite** | **Timescape UI** — NodePort **30900** |
 | Runtime security | **Tetragon** 1.18 | `tetra getevents` CLI |
-| Metrics UI | Prometheus + **Grafana** | **Grafana** — NodePort **30300** (admin/admin) |
-| Demo app | Online Boutique | namespace `online-boutique` |
+| Metrics UI | Prometheus + **Grafana** | **Grafana** — NodePort **30300** (admin / see secret†) |
+| Demo app | Online Boutique | namespace `online-boutique`, frontend **NodePort 30080** |
 
-Open the UIs the same way you already open Timescape (`http://<node-or-tunnel>:30900`); Grafana is
-the same host on `:30300`. For an SSH tunnel: add `-L 30900:localhost:30900 -L 30300:localhost:30300`
-to the `ssh` command and browse `http://localhost:30900` / `:30300`.
+### The four UIs (all on host 192.168.7.10)
+
+| UI | NodePort | What it's for |
+|----|----------|---------------|
+| Online Boutique | **30080** | the live app you're observing/protecting |
+| Hubble UI | **30012** | **live** service map + real‑time flows |
+| Timescape | **30900** | **historical** flows + Network Security (posture) |
+| Grafana | **30300** | Tetragon runtime metrics **+ enforcement** dashboard (admin / see secret†) |
+
+> † **Grafana admin password** is not stored in this repo. Fetch it from the cluster:
+> ```bash
+> kubectl -n monitoring get secret kps-grafana -o jsonpath='{.data.admin-password}' | base64 -d; echo
+> ```
+
+Open the UIs the same way you already open Timescape. For an SSH tunnel, forward all four ports:
+
+```bash
+ssh -J administrator@198.18.133.11 ubuntu@192.168.7.10 -p 32095 -N \
+  -L 30080:localhost:30080 \
+  -L 30012:localhost:30012 \
+  -L 30300:localhost:30300 \
+  -L 30900:localhost:30900
+```
+
+Then browse `http://localhost:30080` (shop), `:30012` (Hubble), `:30900` (Timescape), `:30300`
+(Grafana). Leave that terminal open for the whole session.
+
+> Live vs historical: **Hubble UI (30012)** is the real‑time service map (what's happening *now*);
+> **Timescape (30900)** is the time machine (what happened *then*, plus posture scoring). Show both
+> to contrast live observability with historical forensics.
+
+---
+
+## 0.5 One‑hour run sheet (minute‑by‑minute)
+
+**Screen layout:** browser with **4 tabs pre‑opened** (Boutique `:30080`, Hubble `:30012`,
+Timescape `:30900`, Grafana `:30300`) **+** a terminal **split into two panes** (left = Tetragon
+event stream, right = your "attacker"/commands). Keep the SSH tunnel terminal running separately.
+
+**Pre‑flight (do before the audience joins):**
+```bash
+# 1) tunnel up (leave running)
+ssh -J administrator@198.18.133.11 ubuntu@192.168.7.10 -p 32095 -N \
+  -L 30080:localhost:30080 -L 30012:localhost:30012 \
+  -L 30300:localhost:30300 -L 30900:localhost:30900 &
+# 2) confirm the 4 UIs answer
+for p in 30080 30012 30900 30300; do curl -s -o /dev/null -w "$p=%{http_code}\n" http://localhost:$p/; done
+# 3) clean slate: remove policies so you can apply them live
+kubectl -n online-boutique delete cnp frontend-l7-http redis-cart-allow-cartservice --ignore-not-found
+kubectl -n online-boutique delete tracingpolicynamespaced block-shell-exec --ignore-not-found
+# 4) log into Grafana once (admin / password from kps-grafana secret — see §0 †) and open "Tetragon Runtime Security"
+```
+
+| Time | Scene | UI / pane | Do this | Section |
+|------|-------|-----------|---------|---------|
+| **0:00–0:03** | Intro & context | Online Boutique `:30080` | Click around the shop. "Real e‑commerce app, Kubernetes, no agents inside it, no code changes." | §0–1 |
+| **0:03–0:10** | Live service map | **Hubble UI** `:30012` | Namespace `online-boutique`; watch the map draw; click an edge → live flows by identity. | §3a |
+| **0:10–0:18** | Historical + identity | **Timescape** `:30900` | Observability → Flows, cluster `default`, ns `online-boutique`; expand a flow; drag the time slider back. | §3b |
+| **0:18–0:27** | L4 zero‑trust | Timescape (+ Hubble) | Apply redis policy live; run the blocked connection; filter **Dropped** → `recommendationservice → redis-cart` denied, `cartservice` still allowed. | §4 |
+| **0:27–0:36** | L7 HTTP visibility + enforcement | Timescape `:30900` | Apply L7 policy; show `GET/POST 200` with method/URL; `DELETE → 403`; `:9999 → L4 drop`. | §5 |
+| **0:36–0:43** | Security posture | Timescape → Network Security | Policies inventory → Assessment score/coverage → Enforcement Points. | §6 |
+| **0:43–0:47** | Runtime detection | **Terminal (split)** | Left: `tetra getevents -o compact`. Right: `cat /etc/passwd; id` in a pod → events stream live. Network is silent — that's the point. | §7 |
+| **0:47–0:53** | Runtime enforcement | **Terminal (split)** | Apply `block-shell-exec`; try a shell → **exit 137 (SIGKILL)**; show the app pod still `1/1 Running`. | §8 |
+| **0:53–0:58** | The scoreboard | **Grafana** `:30300` | Open dashboard; run a few more blocked shells; watch **Enforcement actions (SIGKILL)** tick up + the rate panel spike. | §9 |
+| **0:58–1:00** | Wrap | — | "See it (Hubble/Timescape) → segment it (policy) → stop it (Tetragon) → prove it (Grafana). One platform, all eBPF, zero app changes." | §10 |
+
+**If you're running short (~40 min):** drop §6 (Assessment) and §3b's time‑slider deep‑dive; keep
+Hubble live map, one policy (L7), and the full Tetragon detect→enforce→Grafana arc — that's the
+strongest through‑line.
+
+**Reset between runs:** see §11.
 
 ---
 
@@ -43,6 +112,11 @@ flowchart LR
     TG["Tetragon agent\n(eBPF runtime)"]
   end
 
+  subgraph HB["namespace: kube-system"]
+    RELAY["Hubble Relay :80"]
+    HUI["Hubble UI :30012"]
+  end
+
   subgraph TS["namespace: hubble-timescape"]
     ING["Timescape ingester :4261"]
     CH[("ClickHouse\nflows / namespaces")]
@@ -51,13 +125,14 @@ flowchart LR
 
   subgraph MON["namespace: monitoring"]
     PROM["Prometheus"]
-    GRAF["Grafana :30300"]
+    GRAF["Grafana :30300\n(metrics + enforcement)"]
   end
 
   LG -->|HTTP| FE
   CART -->|TCP 6379| REDIS
+  CIL -->|"live flows (gRPC)"| RELAY --> HUI
   CIL -->|"flow stream (gRPC)"| ING --> CH --> TSUI
-  TG -->|"process events / metrics :2112"| PROM --> GRAF
+  TG -->|"process + policy events / metrics :2112"| PROM --> GRAF
   TG -.->|"tetra getevents (CLI)"| Operator["SOC / analyst"]
 ```
 
@@ -67,6 +142,7 @@ flowchart LR
 |-----------|-------|---------------------------|
 | **Online Boutique** (`online-boutique`) | app | The workload we observe and protect: a web `frontend` (HTTP :8080) talking to gRPC microservices; `cartservice` uses `redis-cart` (:6379); `loadgenerator` continuously drives realistic traffic so the UIs always have live data. |
 | **Cilium agent + Hubble** (`kube-system`) | network dataplane (eBPF) | The CNI. It moves every packet in the kernel via eBPF, **enforces** the CiliumNetworkPolicies (L3/L4 and L7/HTTP), and via **Hubble** emits a *flow record* for each connection (source/dest identity, port, verdict, and HTTP method/URL/status when L7 is on). |
+| **Hubble Relay + UI** (`kube-system` :30012) | live network UI | Relay aggregates the Hubble flow streams from the Cilium agent(s); the Hubble UI renders them as a **real‑time service map** + live flows table. This is the *live* network pane (complement to Timescape's *historical* pane). |
 | **Timescape ingester** (`hubble-timescape` :4261) | pipeline | Receives the Hubble flow stream from Cilium and writes it into ClickHouse. This is the link we had to fix — without it the UI shows nothing. |
 | **ClickHouse** (`hubble-timescape`) | store | The time‑series database that holds flows + derived namespace/cluster tables. This is what makes Timescape *historical* (last 1h in Lite). |
 | **Timescape UI** (`hubble-timescape` :30900) | network UI | The single pane for **Flows** (observability) and **Network Security** (Policies, Assessment, Enforcement Points). Everything you show on the network side is here. |
@@ -87,25 +163,56 @@ One platform, both planes, all eBPF, **no changes to the application**.
 sequenceDiagram
   participant You
   participant App as online-boutique
-  participant Hubble
+  participant HU as Hubble UI
   participant TS as Timescape UI
   participant TG as Tetragon
   participant GF as Grafana
 
-  You->>TS: 1. Show live flows + default cluster/namespaces
-  You->>App: 2. Send blocked traffic (L4 :9999, redis :6379)
-  Hubble-->>TS: DROPPED (policy denied)
-  You->>App: 3. Send HTTP methods to frontend
-  Hubble-->>TS: L7 method and URL, DELETE denied 403
-  You->>TS: 4. Network Security views (Policies, Assessment, Enforcement Points)
-  You->>App: 5. Try shell in a pod
+  You->>HU: 1. Live service map + real-time flows
+  You->>TS: 2. Historical flows + default cluster/namespaces
+  You->>App: 3. Send blocked traffic (L4 :9999, redis :6379)
+  TS-->>You: DROPPED (policy denied)
+  You->>App: 4. Send HTTP methods to frontend
+  TS-->>You: L7 method and URL, DELETE denied 403
+  You->>TS: 5. Network Security views (Policies, Assessment, Enforcement Points)
+  You->>App: 6. Try shell in a pod
   TG-->>You: SIGKILL (exit 137) + tetra event
-  TG-->>GF: 6. Exec metrics on Grafana dashboard
+  TG-->>GF: 7. Exec metrics + enforcement count (SIGKILL) on Grafana
 ```
 
 ---
 
-## 3. Part 1 — Network observability (Timescape)
+## 3. Part 1 — Network observability (Hubble UI live + Timescape historical)
+
+The network story has **two panes**: **Hubble UI** shows what's happening *live* right now (a moving
+service map); **Timescape** is the *historical* record you scrub back through. Show live first, then
+the time machine.
+
+### 3a. Hubble UI — the live service map
+
+**What we're doing:** with zero changes to the app, watch every service‑to‑service connection in
+real time, as an animated dependency graph keyed by Kubernetes identity (not IP).
+
+**Where to click (step by step)**
+1. Open **Hubble UI** → `http://<host>:30012`.
+2. Top‑left **namespace** dropdown → select **`online-boutique`**.
+3. Watch the **service map** draw itself: `loadgenerator → frontend → productcatalog / cart /
+   checkout …`, with animated edges as traffic flows.
+4. Click any **edge** (or a service node) → the right‑hand **flows table** filters to that
+   conversation: source/destination identity, port, verdict (Forwarded/Dropped), and L7 (HTTP
+   method/path) once the L7 policy is on.
+5. Use the **verdict filter** (top bar) → set **Dropped** later (Parts 2–3) to watch denials appear
+   live.
+
+**Talk track**
+> "This is Hubble UI — a live map of the application, built entirely from eBPF in the kernel. I
+> haven't touched the app, yet every microservice and every call between them is drawn here in real
+> time, by *identity* — `frontend`, `cartservice`, `checkout` — not by throwaway pod IPs. When we
+> start blocking traffic in a minute, you'll see the denied edges light up right here as it happens."
+
+**Key point to land:** live, identity‑aware service map — the real‑time half of observability.
+
+### 3b. Timescape — the historical record
 
 **What we're doing:** proving that, with zero changes to the app, we can see every network
 conversation in the cluster by *Kubernetes identity* (pod / namespace / workload) instead of by
@@ -409,52 +516,67 @@ app lives.
 ## 9. Part 7 — Grafana runtime dashboard
 
 **What this is:** the CLI stream is great for a live "caught‑in‑the‑act" moment, but leaders want a
-**dashboard** — trends over time, which namespaces are busiest, what's being executed. Tetragon
-exposes Prometheus metrics; Grafana turns them into that dashboard. (It shows **aggregate counts**,
-not the per‑event process tree — that stays in the CLI.)
+**dashboard** — trends over time, which namespaces are busiest, what's being executed, **and how
+many threats were blocked**. Tetragon exposes Prometheus metrics; Grafana turns them into that
+dashboard. It shows **aggregate counts** (including an **enforcement/SIGKILL** count and rate) — the
+per‑event process tree still stays in the CLI.
 
 ### Where to click (step by step)
-1. Open **Grafana** → `http://<host>:30300`. Log in **admin / admin**.
+1. Open **Grafana** → `http://<host>:30300`. Log in as **admin** (password from the `kps-grafana` secret — see † in §0).
 2. Left menu → **Dashboards** → open **"Tetragon Runtime Security"** (or search "Tetragon").
 3. Walk the panels top to bottom:
    - **Process Exec Events (total)** — the overall volume of process starts observed.
    - **Exec rate by namespace** — a time series; point out `online-boutique` vs `kube-system`.
    - **Top executed binaries** — a table; show the busiest binaries per workload.
    - **Events by type** — exec vs exit rates.
+   - **Runtime Enforcement row** (the security payoff):
+     - **Enforcement actions — total (SIGKILL)** — count of blocked/killed execs (green→red once >0).
+     - **Policies enforcing** — how many TracingPolicies are actively enforcing.
+     - **Enforcement rate by policy** — blocked execs/sec over time (e.g. `block-shell-exec`).
+     - **Blocked by policy / binary / namespace** — table of exactly what got killed and where.
 4. Set the time picker (top‑right) to **Last 15 minutes** and **auto‑refresh 30s**.
-5. **Make it move:** in a side terminal, generate activity and watch the panels tick up:
+5. **Make it move:** in a side terminal, generate activity *and* trigger blocks, then watch the
+   panels tick up:
    ```bash
-   for i in $(seq 1 20); do kubectl -n online-boutique exec deploy/loadgenerator -c main -- sh -c 'id; date' >/dev/null; done
+   # exec volume (top panels move)
+   for i in $(seq 1 20); do kubectl -n online-boutique exec deploy/loadgenerator -c main -- sh -c 'id; date' >/dev/null 2>&1; done
+   # enforcement count moves (needs block-shell-exec applied from Part 6):
+   for i in $(seq 1 5); do kubectl -n online-boutique exec deploy/loadgenerator -c main -- sh -c 'echo hi' 2>/dev/null; done
    ```
 
 ### Talk track (the story)
-> "For the SOC analyst, the live stream is perfect. For a security manager, they want the trend line.
-> Same Tetragon data — now as a Grafana dashboard. I can see process‑execution volume over time,
-> break it down by namespace, and see exactly which binaries are running where. If crypto‑mining or
-> a new binary suddenly spikes in a namespace, it shows up here as an anomaly.
+> "For the SOC analyst, the live stream is perfect. For a security manager, they want the trend line
+> and the scoreboard. Same Tetragon data — now as a Grafana dashboard. I can see process‑execution
+> volume over time, break it down by namespace, and see exactly which binaries are running where.
 >
-> Watch — I'll generate some activity in the app… and the panels move in near real time. So we have
-> the network story in Timescape and the runtime story in Grafana, both fed by eBPF, giving security
-> and platform teams one coherent picture."
+> And here's the part leadership cares about — the **Enforcement** row. This counter is the number
+> of times Tetragon actually *killed* something: real SIGKILLs on blocked shell breakouts, per
+> policy, over time. Watch — I'll try a few more shells… and the 'Enforcement actions' stat ticks
+> up and the rate panel spikes. So we have the network story in Timescape, the live runtime story in
+> the CLI, and the runtime *scoreboard* in Grafana — all fed by eBPF."
 
-> Honest scoping note for Q&A: Grafana shows **aggregate metrics**. The full **process tree** and the
-> **live Sigkill event** come from `tetra getevents`. For a runtime *UI* with per‑event detail you'd
-> move to the full Isovalent Enterprise security‑observability stack (a bigger deploy) — for a demo,
-> Grafana + the CLI together cover it.
+> Honest scoping note for Q&A: Grafana shows **aggregate metrics** (counts/rates), including the
+> enforcement count. The full **process tree** and the **live Sigkill event** come from
+> `tetra getevents`. For a runtime *UI* with per‑event detail you'd move to the full Isovalent
+> Enterprise security‑observability stack (a bigger deploy) — for a demo, Grafana + the CLI together
+> cover it.
 
-Built via [`../tetragon/scripts/01-install-grafana-tetragon.sh`](../tetragon/scripts/01-install-grafana-tetragon.sh).
+Built via [`../tetragon/scripts/01-install-grafana-tetragon.sh`](../tetragon/scripts/01-install-grafana-tetragon.sh);
+the enforcement panels are driven by the `tetragon_policy_events_total` metric.
 
-**Key point to land:** Timescape (network) **+** Grafana (runtime metrics) **+** `tetra getevents`
-(runtime live) = one full‑stack security picture, all from eBPF, zero app changes.
+**Key point to land:** Timescape (network) **+** Grafana (runtime metrics **&** enforcement count)
+**+** `tetra getevents` (runtime live) = one full‑stack security picture, all from eBPF, zero app
+changes.
 
 ---
 
 ## 10. Key messages (talk track)
 
 - **Identity‑aware, not IP‑aware** — everything is tied to pod/namespace/workload.
+- **Live *and* historical** — Hubble UI shows the real‑time service map; Timescape stores flows for after‑the‑fact investigation.
 - **Observe → segment → enforce** — flows, then L4/L7 policy, then runtime enforcement.
 - **Network + runtime** — Cilium/Timescape (L3–L7) *and* Tetragon (process/file/syscall) in one platform.
-- **Historical** — Timescape stores flows for after‑the‑fact investigation.
+- **Prove the outcome** — Grafana's enforcement panels count the actual SIGKILLs (blocked threats) per policy.
 - **No app changes** — all eBPF, zero instrumentation.
 
 ---
