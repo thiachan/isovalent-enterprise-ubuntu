@@ -1,0 +1,41 @@
+# Detect eBPF program loading from inside the online-boutique application namespace.
+#
+# Why: application workloads should NEVER load eBPF programs. A bpf(BPF_PROG_LOAD)
+# originating from an app pod is a strong indicator of BPFDoor-style implant
+# activity — BPFDoor installs a BPF socket-filter program to passively sniff
+# traffic and trigger its backdoor on "magic" packets, without opening a listening
+# port. Catching the program-load syscall surfaces the implant as it arms itself.
+#
+# Hook: bpf(2) => bpf(int cmd, union bpf_attr *attr, unsigned int size)
+#   - arg index 0 = cmd
+#   - BPF_PROG_LOAD == 5
+#   - x86_64 symbol on kernel 6.8 is __x64_sys_bpf (same convention as the other
+#     syscall policies in this repo).
+#
+# Action: Post (observe/alert only). The resulting metric
+# tetragon_policy_events_total{policy="detect-bpf-prog-load"} is what the
+# PrometheusRule "tetragon-bpfdoor-alerts" fires on. To actively block instead,
+# add matchActions action: Sigkill.
+#
+# Scope: namespaced to online-boutique so it does NOT flag Cilium/Tetragon or other
+# system components (which legitimately load BPF programs in kube-system).
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicyNamespaced
+metadata:
+  name: detect-bpf-prog-load
+  namespace: online-boutique
+spec:
+  kprobes:
+    - call: "__x64_sys_bpf"
+      syscall: true
+      args:
+        - index: 0
+          type: "int"    # bpf() cmd
+      selectors:
+        - matchArgs:
+            - index: 0
+              operator: "Equal"
+              values:
+                - "5"      # BPF_PROG_LOAD
+          matchActions:
+            - action: Post

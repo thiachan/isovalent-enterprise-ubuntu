@@ -1,0 +1,47 @@
+# TracingPolicy: detect execution of recon / download / packaging tools inside
+# the online-boutique namespace. Detection only (action Post) — it does NOT kill,
+# it generates a Tetragon event + increments
+#   tetragon_policy_events_total{policy="detect-suspicious-tools"}
+# which the companion PrometheusRule (tetragon-alerts.yaml) alerts on.
+#
+# Rationale: a compromised container rarely opens a new *network* listener first —
+# it runs tools to look around and pull payloads (curl/wget), pivot (nc/socat),
+# scan (nmap), or install tooling (apt/apk/pip). Catching those execs is a strong
+# early signal that complements the network plane (Cilium/Hubble/Timescape).
+#
+# Kernel note (6.8): security_bprm_creds_from_file(struct linux_binprm *bprm,
+# struct file *file) — the file to match is argument index 1 (NOT 0).
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicyNamespaced
+metadata:
+  name: detect-suspicious-tools
+  namespace: online-boutique
+spec:
+  kprobes:
+    - call: "security_bprm_creds_from_file"
+      syscall: false
+      args:
+        - index: 1
+          type: "file"
+      selectors:
+        - matchArgs:
+            - index: 1
+              operator: "Postfix"
+              values:
+                - "/curl"
+                - "/wget"
+                - "/nc"
+                - "/ncat"
+                - "/netcat"
+                - "/nmap"
+                - "/socat"
+                - "/apt"
+                - "/apt-get"
+                - "/apk"
+                - "/yum"
+                - "/dnf"
+                - "/dpkg"
+                - "/pip"
+                - "/pip3"
+          matchActions:
+            - action: Post

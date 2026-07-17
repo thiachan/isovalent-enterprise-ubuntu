@@ -1,0 +1,78 @@
+# Prevent container escape from the online-boutique application namespace.
+# Kills (SIGKILL) any process that attempts a namespace breakout or runs
+# container-escape tooling. Legitimate boutique workloads never do these things,
+# so a match is high-signal.
+#
+# Vectors covered:
+#   - setns(2)     : join another (e.g. the host) namespace
+#   - unshare(2)   : create/detach namespaces (privilege/ns manipulation)
+#   - mount(2)     : mount host filesystems / overlay/procfs tricks
+#   - exec of escape tools: nsenter, unshare, setns, mount, pivot_root, capsh
+#
+# Notes:
+#   - x86_64 syscall symbols on this cluster's kernel 6.8 use the __x64_sys_ prefix
+#     (same convention as detect-privilege-escalation.yaml).
+#   - security_bprm_creds_from_file has the file at argument index 1 on kernel 6.8
+#     (same gotcha as block-shell-exec.yaml).
+#   - runc/kubelet run in the host namespace, not online-boutique, so normal pod
+#     startup mounts/unshares are NOT affected by this namespaced policy.
+#   - Enforce mode uses matchActions action: Sigkill. To observe only, swap Sigkill
+#     for Post.
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicyNamespaced
+metadata:
+  name: prevent-container-escape
+  namespace: online-boutique
+spec:
+  kprobes:
+    # --- namespace breakout: join another namespace (classic host escape) ---
+    - call: "__x64_sys_setns"
+      syscall: true
+      args:
+        - index: 0
+          type: "int"    # fd
+        - index: 1
+          type: "int"    # nstype
+      selectors:
+        - matchActions:
+            - action: Sigkill
+
+    # --- namespace manipulation: detach/create new namespaces ---
+    - call: "__x64_sys_unshare"
+      syscall: true
+      args:
+        - index: 0
+          type: "int"    # unshare flags (CLONE_NEW*)
+      selectors:
+        - matchActions:
+            - action: Sigkill
+
+    # --- mounting host filesystems / procfs / overlay from inside a pod ---
+    - call: "__x64_sys_mount"
+      syscall: true
+      args:
+        - index: 0
+          type: "string" # source / dev_name
+      selectors:
+        - matchActions:
+            - action: Sigkill
+
+    # --- exec of well-known container-escape tooling ---
+    - call: "security_bprm_creds_from_file"
+      syscall: false
+      args:
+        - index: 1
+          type: "file"
+      selectors:
+        - matchArgs:
+            - index: 1
+              operator: "Postfix"
+              values:
+                - "/nsenter"
+                - "/unshare"
+                - "/setns"
+                - "/mount"
+                - "/pivot_root"
+                - "/capsh"
+          matchActions:
+            - action: Sigkill

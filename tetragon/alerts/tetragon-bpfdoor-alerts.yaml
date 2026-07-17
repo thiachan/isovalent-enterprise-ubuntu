@@ -1,0 +1,57 @@
+# Prometheus alert rules for Tetragon runtime-security events.
+#
+# Picked up automatically by the kube-prometheus-stack Prometheus via its
+# ruleSelector (must carry the label `release: kps`). Alerts are evaluated by
+# Prometheus and visible under Alerts / in Grafana; wire an Alertmanager receiver
+# to route them to Slack/email/PagerDuty.
+#
+# Driven by the per-policy metric tetragon_policy_events_total, emitted by the
+# TracingPolicies detect-bpf-prog-load.yaml and prevent-container-escape.yaml.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: tetragon-bpfdoor-alerts
+  namespace: monitoring
+  labels:
+    release: kps          # required so the Prometheus ruleSelector picks it up
+    app: tetragon
+    role: alert-rules
+spec:
+  groups:
+    - name: tetragon-runtime-security
+      rules:
+        # --- BPFDoor / rogue eBPF program load in an application namespace ---
+        - alert: TetragonBPFProgramLoadDetected
+          expr: increase(tetragon_policy_events_total{policy="detect-bpf-prog-load"}[2m]) > 0
+          for: 0m
+          labels:
+            severity: critical
+            plane: runtime
+            threat: bpfdoor
+          annotations:
+            summary: "eBPF program load in app namespace (possible BPFDoor implant)"
+            description: >-
+              A bpf(BPF_PROG_LOAD) syscall was observed from workload
+              '{{ $labels.workload }}' (binary {{ $labels.binary }}) in namespace
+              '{{ $labels.namespace }}'. Application pods must never load eBPF
+              programs — this is a strong indicator of BPFDoor-style implant
+              activity arming a passive packet sniffer/backdoor. Isolate and
+              investigate the pod immediately.
+            runbook: "Check pod for unexpected binaries; capture memory/process tree via `tetra getevents`; quarantine the node if confirmed."
+
+        # --- Container escape attempt blocked by the enforcement policy ---
+        - alert: TetragonContainerEscapeBlocked
+          expr: increase(tetragon_policy_events_total{policy="prevent-container-escape"}[2m]) > 0
+          for: 0m
+          labels:
+            severity: critical
+            plane: runtime
+            threat: container-escape
+          annotations:
+            summary: "Container escape attempt blocked (SIGKILL) in {{ $labels.namespace }}"
+            description: >-
+              Tetragon killed a process attempting a namespace breakout or running
+              container-escape tooling (hook {{ $labels.hook }}) from workload
+              '{{ $labels.workload }}' in namespace '{{ $labels.namespace }}'.
+              The attempt was prevented in-kernel; review the pod for compromise
+              and how the attacker gained execution.
